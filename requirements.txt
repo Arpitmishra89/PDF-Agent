@@ -4,4 +4,6 @@ python-dotenv
 langchain
 PyPDF2
 faiss-cpu
-langchain-google-genai
+langchain-text-splitters
+langchain-community
+langchain-core
