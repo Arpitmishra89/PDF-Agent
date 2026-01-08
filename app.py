@@ -57,10 +57,21 @@ def load_pdf(file) -> str:
 
 def chunk_text(text: str) -> List[str]:
     splitter = RecursiveCharacterTextSplitter(
-        chunk_size=900,
-        chunk_overlap=120
+        chunk_size=800,
+        chunk_overlap=100
     )
-    return splitter.split_text(text)
+
+    chunks = splitter.split_text(text)
+
+    # REMOVE empty / bad chunks
+    clean_chunks = [
+        chunk.strip()
+        for chunk in chunks
+        if chunk and len(chunk.strip()) > 20
+    ]
+
+    return clean_chunks
+
 
 
 # =========================
@@ -71,12 +82,29 @@ class GeminiEmbeddings(Embeddings):
 
     def embed_documents(self, texts: List[str]) -> List[List[float]]:
         embeddings = []
+
         for text in texts:
-            response = genai.embed_content(
-                model="models/text-embedding-004",
-                content=text
-            )
-            embeddings.append(response["embedding"])
+            text = text.strip()
+
+            # Safety checks
+            if not text or len(text) < 20:
+                continue
+
+            try:
+                response = genai.embed_content(
+                    model="models/text-embedding-004",
+                    content=text
+                )
+                embeddings.append(response["embedding"])
+
+            except Exception as e:
+                # Skip bad chunks instead of crashing
+                print(f"Skipping chunk due to error: {e}")
+                continue
+
+        if not embeddings:
+            raise ValueError("No valid embeddings could be created.")
+
         return embeddings
 
     def embed_query(self, text: str) -> List[float]:
@@ -87,13 +115,14 @@ class GeminiEmbeddings(Embeddings):
         return response["embedding"]
 
 
+
 # =========================
 # FAISS INDEX
 # =========================
 
 def create_faiss_index(chunks: List[str]):
     if not chunks:
-        raise ValueError("No text chunks created from PDF")
+        raise ValueError("No valid text chunks available for indexing.")
 
     embeddings = GeminiEmbeddings()
     return FAISS.from_texts(texts=chunks, embedding=embeddings)
