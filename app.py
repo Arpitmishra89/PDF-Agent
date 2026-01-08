@@ -8,9 +8,12 @@ from langchain_text_splitters import RecursiveCharacterTextSplitter
 from langchain_community.vectorstores import FAISS
 from langchain_core.embeddings import Embeddings
 
-from google import genai
+import google.generativeai as genai
 
-# ENV + GEMINI CLIENT
+
+# =========================
+# ENV + GEMINI SETUP
+# =========================
 
 load_dotenv()
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
@@ -18,16 +21,25 @@ GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 if not GEMINI_API_KEY:
     raise ValueError("GEMINI_API_KEY not found in environment")
 
-client = genai.Client(api_key=GEMINI_API_KEY)
+genai.configure(api_key=GEMINI_API_KEY)
 
+# Gemini LLM (for answers)
+llm = genai.GenerativeModel("gemini-1.5-flash")
+
+
+# =========================
 # STREAMLIT CONFIG
+# =========================
 
 st.set_page_config(page_title="PDF Agent", layout="wide")
-st.title("PDF Agent - Document Question Answering")
+st.title("📄 PDF Agent – Document Question Answering")
 
+
+# =========================
 # PDF LOADING
+# =========================
 
-def load_pdf(file):
+def load_pdf(file) -> str:
     reader = PdfReader(file)
     text = ""
 
@@ -38,70 +50,79 @@ def load_pdf(file):
 
     return text
 
-# CHUNKING
 
-def chunk_text(text):
+# =========================
+# TEXT CHUNKING
+# =========================
+
+def chunk_text(text: str) -> List[str]:
     splitter = RecursiveCharacterTextSplitter(
         chunk_size=900,
         chunk_overlap=120
     )
     return splitter.split_text(text)
 
-# PROPER GEMINI EMBEDDINGS (CRITICAL)
 
+# =========================
+# GEMINI EMBEDDINGS
+# =========================
 
 class GeminiEmbeddings(Embeddings):
 
     def embed_documents(self, texts: List[str]) -> List[List[float]]:
-        response = client.models.embed_content(
-            model="models/text-embedding-004",
-            contents=texts
-        )
-        return [emb.values for emb in response.embeddings]
+        embeddings = []
+        for text in texts:
+            response = genai.embed_content(
+                model="models/text-embedding-004",
+                content=text
+            )
+            embeddings.append(response["embedding"])
+        return embeddings
 
     def embed_query(self, text: str) -> List[float]:
-        response = client.models.embed_content(
+        response = genai.embed_content(
             model="models/text-embedding-004",
-            contents=text
+            content=text
         )
-        return response.embeddings[0].values
+        return response["embedding"]
 
 
-# FAISS INDEX CREATION
+# =========================
+# FAISS INDEX
+# =========================
 
+def create_faiss_index(chunks: List[str]):
+    if not chunks:
+        raise ValueError("No text chunks created from PDF")
 
-def create_faiss_index(chunks):
     embeddings = GeminiEmbeddings()
-    return FAISS.from_texts(
-        texts=chunks,
-        embedding=embeddings
-    )
+    return FAISS.from_texts(texts=chunks, embedding=embeddings)
 
 
+# =========================
 # RETRIEVAL
+# =========================
 
-
-def retrieve_context(query, vectorstore, k=4):
+def retrieve_context(query: str, vectorstore, k: int = 4) -> str:
     docs = vectorstore.similarity_search(query, k=k)
-    if not docs:
-        return ""
-    return "\n\n".join(d.page_content for d in docs)
+    return "\n\n".join(d.page_content for d in docs) if docs else ""
 
 
+# =========================
 # ANSWER GENERATION
+# =========================
 
-
-def generate_answer(query, context):
+def generate_answer(query: str, context: str) -> str:
     if not context.strip():
         return "Answer not found in the document."
 
     prompt = f"""
-You are a document question answering system.
+You are a document-based question answering assistant.
 
 Rules:
-- Use ONLY the provided context
-- Do NOT use prior knowledge
-- If the answer is not explicitly present, reply exactly:
+- Use ONLY the given context
+- Do NOT add external knowledge
+- If the answer is not in the context, say:
   "Answer not found in the document."
 
 Context:
@@ -111,31 +132,29 @@ Question:
 {query}
 """
 
-    response = client.models.generate_content(
-        model="models/gemini-flash-lite-latest",
-        contents=prompt
-    )
-
-    return response.text
+    response = llm.generate_content(prompt)
+    return response.text.strip()
 
 
+# =========================
 # PDF PROCESSING (CACHED)
-
+# =========================
 
 @st.cache_resource(show_spinner=False)
 def process_pdf(file):
     text = load_pdf(file)
 
     if not text.strip():
-        st.error("This PDF appears to be scanned. Text extraction failed.")
+        st.error("This PDF appears to be scanned or empty.")
         st.stop()
 
     chunks = chunk_text(text)
     return create_faiss_index(chunks)
 
 
+# =========================
 # STREAMLIT UI
-
+# =========================
 
 uploaded_file = st.file_uploader("Upload a PDF", type=["pdf"])
 
@@ -143,7 +162,7 @@ if uploaded_file:
     with st.spinner("Processing PDF..."):
         vectorstore = process_pdf(uploaded_file)
 
-    st.success("PDF processed successfully")
+    st.success("✅ PDF processed successfully")
 
     query = st.text_input("Ask a question from the document")
 
@@ -154,3 +173,5 @@ if uploaded_file:
 
         st.subheader("Answer")
         st.write(answer)
+
+
