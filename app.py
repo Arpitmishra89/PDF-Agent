@@ -83,7 +83,7 @@ def chunk_text(text: str) -> List[str]:
 
 
 # =========================
-# GEMINI EMBEDDINGS (SAFE)
+# GEMINI EMBEDDINGS (PRODUCTION SAFE)
 # =========================
 
 class GeminiEmbeddings(Embeddings):
@@ -91,48 +91,61 @@ class GeminiEmbeddings(Embeddings):
     def embed_documents(self, texts: List[str]) -> List[List[float]]:
         embeddings = []
 
-        for i, text in enumerate(texts):
+        for text in texts:
+            text = text.strip()
+
+            # Skip empty chunks
+            if not text:
+                continue
+
             try:
                 response = genai.embed_content(
                     model="models/text-embedding-004",
-                    content=text[:2000]  # safe token limit
+                    content=text
                 )
 
-                embedding = response.get("embedding")
-                if embedding and len(embedding) > 0:
-                    embeddings.append(embedding)
+                vector = response["embedding"]
+
+                # Validate embedding vector
+                if vector and len(vector) > 10:
+                    embeddings.append(vector)
 
             except Exception as e:
-                print(f"Skipping chunk {i}: {e}")
+                print("Embedding error:", e)
                 continue
+
+        if not embeddings:
+            raise ValueError("No valid embeddings could be created from the document.")
 
         return embeddings
 
     def embed_query(self, text: str) -> List[float]:
         response = genai.embed_content(
             model="models/text-embedding-004",
-            content=text[:2000]
+            content=text
         )
         return response["embedding"]
+
 
 
 # =========================
 # FAISS INDEX
 # =========================
 
-def create_faiss_index(chunks: List[str]):
-    if not chunks:
-        st.error("No readable content found in this PDF.")
-        st.stop()
+def create_faiss_index(chunks):
+    # Remove empty chunks
+    clean_chunks = [c.strip() for c in chunks if c.strip()]
+
+    if not clean_chunks:
+        raise ValueError("No readable text found in this PDF.")
 
     embeddings = GeminiEmbeddings()
 
-    vectorstore = FAISS.from_texts(
-        texts=chunks,
+    return FAISS.from_texts(
+        texts=clean_chunks,
         embedding=embeddings
     )
 
-    return vectorstore
 
 
 # =========================
@@ -182,17 +195,18 @@ Question:
 def process_pdf(file):
     text = load_pdf(file)
 
-    if not text or len(text) < 200:
-        st.error("This PDF does not contain readable text (possibly scanned).")
+    if not text.strip():
+        st.error("This PDF appears to be scanned or empty.")
         st.stop()
 
     chunks = chunk_text(text)
 
     if not chunks:
-        st.error("No readable text chunks could be created.")
+        st.error("No text chunks could be created.")
         st.stop()
 
     return create_faiss_index(chunks)
+
 
 
 # =========================
