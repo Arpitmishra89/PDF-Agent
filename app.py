@@ -44,9 +44,12 @@ def load_pdf(file) -> str:
     text = ""
 
     for page in reader.pages:
-        page_text = page.extract_text()
-        if page_text:
-            text += page_text + "\n"
+        try:
+            page_text = page.extract_text()
+            if page_text:
+                text += page_text + "\n"
+        except:
+            continue
 
     return text.strip()
 
@@ -63,16 +66,15 @@ def chunk_text(text: str) -> List[str]:
 
     chunks = splitter.split_text(text)
 
+    # Clean chunks
     clean_chunks = []
     for chunk in chunks:
         chunk = chunk.strip()
 
-        # Skip empty or garbage chunks
         if not chunk:
             continue
 
-        # Skip very tiny junk fragments
-        if len(chunk) < 30:
+        if len(chunk) < 40:   # skip tiny garbage chunks
             continue
 
         clean_chunks.append(chunk)
@@ -81,7 +83,7 @@ def chunk_text(text: str) -> List[str]:
 
 
 # =========================
-# GEMINI EMBEDDINGS
+# GEMINI EMBEDDINGS (SAFE)
 # =========================
 
 class GeminiEmbeddings(Embeddings):
@@ -93,25 +95,23 @@ class GeminiEmbeddings(Embeddings):
             try:
                 response = genai.embed_content(
                     model="models/text-embedding-004",
-                    content=text[:2500]   # safe token limit
+                    content=text[:2000]  # safe token limit
                 )
 
-                if "embedding" in response:
-                    embeddings.append(response["embedding"])
+                embedding = response.get("embedding")
+                if embedding and len(embedding) > 0:
+                    embeddings.append(embedding)
 
             except Exception as e:
                 print(f"Skipping chunk {i}: {e}")
                 continue
-
-        if not embeddings:
-            raise ValueError("No readable text found in this PDF.")
 
         return embeddings
 
     def embed_query(self, text: str) -> List[float]:
         response = genai.embed_content(
             model="models/text-embedding-004",
-            content=text[:2500]
+            content=text[:2000]
         )
         return response["embedding"]
 
@@ -122,10 +122,17 @@ class GeminiEmbeddings(Embeddings):
 
 def create_faiss_index(chunks: List[str]):
     if not chunks:
-        raise ValueError("No valid text chunks found in PDF.")
+        st.error("No readable content found in this PDF.")
+        st.stop()
 
     embeddings = GeminiEmbeddings()
-    return FAISS.from_texts(texts=chunks, embedding=embeddings)
+
+    vectorstore = FAISS.from_texts(
+        texts=chunks,
+        embedding=embeddings
+    )
+
+    return vectorstore
 
 
 # =========================
@@ -176,13 +183,13 @@ def process_pdf(file):
     text = load_pdf(file)
 
     if not text or len(text) < 200:
-        st.error("This PDF does not contain readable text.")
+        st.error("This PDF does not contain readable text (possibly scanned).")
         st.stop()
 
     chunks = chunk_text(text)
 
     if not chunks:
-        st.error("No readable content found in PDF.")
+        st.error("No readable text chunks could be created.")
         st.stop()
 
     return create_faiss_index(chunks)
