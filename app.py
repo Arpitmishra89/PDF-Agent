@@ -10,6 +10,13 @@ from langchain_core.embeddings import Embeddings
 
 import google.generativeai as genai
 
+genai.configure(api_key=os.getenv("GOOGLE_API_KEY"))
+
+llm = genai.GenerativeModel("models/gemini-1.5-flash")
+
+from dotenv import load_dotenv
+load_dotenv()
+
 
 # =========================
 # ENV + GEMINI SETUP
