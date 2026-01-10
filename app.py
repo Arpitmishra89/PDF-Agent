@@ -10,19 +10,13 @@ from langchain_core.embeddings import Embeddings
 
 import google.generativeai as genai
 
-genai.configure(api_key=os.getenv("GOOGLE_API_KEY"))
-
-llm = genai.GenerativeModel("models/gemini-1.5-flash")
-
-from dotenv import load_dotenv
-load_dotenv()
-
 
 # =========================
 # ENV + GEMINI SETUP
 # =========================
 
 load_dotenv()
+
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 
 if not GEMINI_API_KEY:
@@ -30,8 +24,8 @@ if not GEMINI_API_KEY:
 
 genai.configure(api_key=GEMINI_API_KEY)
 
-# Gemini LLM
-llm = genai.GenerativeModel("gemini-pro")
+# Use only supported model
+llm = genai.GenerativeModel("models/gemini-1.5-flash")
 
 
 # =========================
@@ -73,15 +67,13 @@ def chunk_text(text: str) -> List[str]:
 
     chunks = splitter.split_text(text)
 
-    # Clean chunks
     clean_chunks = []
     for chunk in chunks:
         chunk = chunk.strip()
 
         if not chunk:
             continue
-
-        if len(chunk) < 40:   # skip tiny garbage chunks
+        if len(chunk) < 40:
             continue
 
         clean_chunks.append(chunk)
@@ -90,7 +82,7 @@ def chunk_text(text: str) -> List[str]:
 
 
 # =========================
-# GEMINI EMBEDDINGS (PRODUCTION SAFE)
+# GEMINI EMBEDDINGS
 # =========================
 
 class GeminiEmbeddings(Embeddings):
@@ -100,8 +92,6 @@ class GeminiEmbeddings(Embeddings):
 
         for text in texts:
             text = text.strip()
-
-            # Skip empty chunks
             if not text:
                 continue
 
@@ -113,7 +103,6 @@ class GeminiEmbeddings(Embeddings):
 
                 vector = response["embedding"]
 
-                # Validate embedding vector
                 if vector and len(vector) > 10:
                     embeddings.append(vector)
 
@@ -134,13 +123,11 @@ class GeminiEmbeddings(Embeddings):
         return response["embedding"]
 
 
-
 # =========================
 # FAISS INDEX
 # =========================
 
 def create_faiss_index(chunks):
-    # Remove empty chunks
     clean_chunks = [c.strip() for c in chunks if c.strip()]
 
     if not clean_chunks:
@@ -154,15 +141,16 @@ def create_faiss_index(chunks):
     )
 
 
-
 # =========================
 # RETRIEVAL
 # =========================
 
 def retrieve_context(query: str, vectorstore, k: int = 4) -> str:
     docs = vectorstore.similarity_search(query, k=k)
+
     if not docs:
         return ""
+
     return "\n\n".join(d.page_content for d in docs)
 
 
@@ -213,7 +201,6 @@ def process_pdf(file):
         st.stop()
 
     return create_faiss_index(chunks)
-
 
 
 # =========================
