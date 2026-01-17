@@ -1,6 +1,5 @@
 import os
 import streamlit as st
-from dotenv import load_dotenv
 from PyPDF2 import PdfReader
 from typing import List
 
@@ -8,24 +7,29 @@ from langchain_text_splitters import RecursiveCharacterTextSplitter
 from langchain_community.vectorstores import FAISS
 from langchain_core.embeddings import Embeddings
 
-import google.generativeai as genai
+from google.generativeai import configure, GenerativeModel, embed_content
 
 
 # =========================
-# ENV + GEMINI SETUP
+# GEMINI CONFIG (CLOUD SAFE)
 # =========================
 
-load_dotenv()
+os.environ["GOOGLE_API_USE_MTLS_ENDPOINT"] = "never"
 
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
-
 if not GEMINI_API_KEY:
     raise ValueError("GEMINI_API_KEY not found in environment")
 
-genai.configure(api_key=GEMINI_API_KEY)
+configure(api_key=GEMINI_API_KEY)
 
-# Use only supported model
-llm = genai.GenerativeModel("models/gemini-1.5-flash")
+# Latest supported model
+llm = GenerativeModel("gemini-1.5-flash")
+
+# quick connection test
+try:
+    llm.generate_content("Hello")
+except Exception as e:
+    raise RuntimeError(f"Gemini API connection failed: {e}")
 
 
 # =========================
@@ -96,8 +100,8 @@ class GeminiEmbeddings(Embeddings):
                 continue
 
             try:
-                response = genai.embed_content(
-                    model="models/text-embedding-004",
+                response = embed_content(
+                    model="text-embedding-004",
                     content=text
                 )
 
@@ -116,8 +120,8 @@ class GeminiEmbeddings(Embeddings):
         return embeddings
 
     def embed_query(self, text: str) -> List[float]:
-        response = genai.embed_content(
-            model="models/text-embedding-004",
+        response = embed_content(
+            model="text-embedding-004",
             content=text
         )
         return response["embedding"]
