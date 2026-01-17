@@ -4,4 +4,7 @@ langchain
 langchain-community
 langchain-text-splitters
 faiss-cpu
-google-generativeai>=0.4.1
+openai
+python-dotenv
+sentence-transformers
+

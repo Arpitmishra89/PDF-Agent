@@ -2,42 +2,38 @@ import os
 import streamlit as st
 from PyPDF2 import PdfReader
 from typing import List
+from dotenv import load_dotenv
 
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 from langchain_community.vectorstores import FAISS
 from langchain_core.embeddings import Embeddings
 
-from google.generativeai import configure, GenerativeModel, embed_content
+from sentence_transformers import SentenceTransformer
+from openai import OpenAI
 
 
 # =========================
-# GEMINI CONFIG (CLOUD SAFE)
+# ENV SETUP
 # =========================
 
-os.environ["GOOGLE_API_USE_MTLS_ENDPOINT"] = "never"
+load_dotenv()
 
-GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
-if not GEMINI_API_KEY:
-    raise ValueError("GEMINI_API_KEY not found in environment")
+GROQ_API_KEY = os.getenv("GROQ_API_KEY")
+if not GROQ_API_KEY:
+    raise ValueError("GROQ_API_KEY not found in .env file")
 
-configure(api_key=GEMINI_API_KEY)
-
-# Latest supported model
-llm = GenerativeModel("gemini-1.5-flash")
-
-# quick connection test
-try:
-    llm.generate_content("Hello")
-except Exception as e:
-    raise RuntimeError(f"Gemini API connection failed: {e}")
+client = OpenAI(
+    api_key=GROQ_API_KEY,
+    base_url="https://api.groq.com/openai/v1"
+)
 
 
 # =========================
 # STREAMLIT CONFIG
 # =========================
 
-st.set_page_config(page_title="PDF Agent", layout="wide")
-st.title("📄 PDF Agent - Document Question Answering")
+st.set_page_config(page_title="PDF AI Agent (Groq)", layout="wide")
+st.title("📄 PDF AI Agent")
 
 
 # =========================
@@ -74,57 +70,28 @@ def chunk_text(text: str) -> List[str]:
     clean_chunks = []
     for chunk in chunks:
         chunk = chunk.strip()
-
         if not chunk:
             continue
         if len(chunk) < 40:
             continue
-
         clean_chunks.append(chunk)
 
     return clean_chunks
 
 
 # =========================
-# GEMINI EMBEDDINGS
+# EMBEDDINGS (LOCAL + FREE)
 # =========================
 
-class GeminiEmbeddings(Embeddings):
+class HFEmbeddings(Embeddings):
+    def __init__(self):
+        self.model = SentenceTransformer("all-MiniLM-L6-v2")
 
     def embed_documents(self, texts: List[str]) -> List[List[float]]:
-        embeddings = []
-
-        for text in texts:
-            text = text.strip()
-            if not text:
-                continue
-
-            try:
-                response = embed_content(
-                    model="text-embedding-004",
-                    content=text
-                )
-
-                vector = response["embedding"]
-
-                if vector and len(vector) > 10:
-                    embeddings.append(vector)
-
-            except Exception as e:
-                print("Embedding error:", e)
-                continue
-
-        if not embeddings:
-            raise ValueError("No valid embeddings could be created from the document.")
-
-        return embeddings
+        return self.model.encode(texts).tolist()
 
     def embed_query(self, text: str) -> List[float]:
-        response = embed_content(
-            model="text-embedding-004",
-            content=text
-        )
-        return response["embedding"]
+        return self.model.encode(text).tolist()
 
 
 # =========================
@@ -132,17 +99,8 @@ class GeminiEmbeddings(Embeddings):
 # =========================
 
 def create_faiss_index(chunks):
-    clean_chunks = [c.strip() for c in chunks if c.strip()]
-
-    if not clean_chunks:
-        raise ValueError("No readable text found in this PDF.")
-
-    embeddings = GeminiEmbeddings()
-
-    return FAISS.from_texts(
-        texts=clean_chunks,
-        embedding=embeddings
-    )
+    embeddings = HFEmbeddings()
+    return FAISS.from_texts(texts=chunks, embedding=embeddings)
 
 
 # =========================
@@ -159,7 +117,7 @@ def retrieve_context(query: str, vectorstore, k: int = 4) -> str:
 
 
 # =========================
-# ANSWER GENERATION
+# ANSWER GENERATION (Groq)
 # =========================
 
 def generate_answer(query: str, context: str) -> str:
@@ -182,8 +140,16 @@ Question:
 {query}
 """
 
-    response = llm.generate_content(prompt)
-    return response.text
+    response = client.chat.completions.create(
+        model="llama-3.1-8b-instant",   # ✅ latest Groq model
+        messages=[
+            {"role": "system", "content": "You are a helpful document assistant"},
+            {"role": "user", "content": prompt}
+        ],
+        temperature=0.2
+    )
+
+    return response.choices[0].message.content
 
 
 # =========================
