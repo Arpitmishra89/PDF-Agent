@@ -1,89 +1,94 @@
 import os
 import streamlit as st
+from dotenv import load_dotenv
 from PyPDF2 import PdfReader
 from typing import List
-from dotenv import load_dotenv
 
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 from langchain_community.vectorstores import FAISS
+from langchain_core.documents import Document
 from langchain_core.embeddings import Embeddings
 
-from sentence_transformers import SentenceTransformer
 from openai import OpenAI
 
-
 # =========================
-# ENV SETUP
+# ENV CONFIG
 # =========================
 
 load_dotenv()
-
 GROQ_API_KEY = os.getenv("GROQ_API_KEY")
+
 if not GROQ_API_KEY:
-    raise ValueError("GROQ_API_KEY not found in .env file")
+    raise ValueError("GROQ_API_KEY not found in environment")
 
 client = OpenAI(
     api_key=GROQ_API_KEY,
     base_url="https://api.groq.com/openai/v1"
 )
 
-
 # =========================
 # STREAMLIT CONFIG
 # =========================
 
-st.set_page_config(page_title="PDF AI Agent (Groq)", layout="wide")
+st.set_page_config(page_title="PDF AI Agent", layout="wide")
 st.title("📄 PDF AI Agent")
-
 
 # =========================
 # PDF LOADING
 # =========================
 
-def load_pdf(file) -> str:
+def load_pdf(file):
     reader = PdfReader(file)
-    text = ""
+    documents = []
 
-    for page in reader.pages:
+    for page_num, page in enumerate(reader.pages, start=1):
         try:
-            page_text = page.extract_text()
-            if page_text:
-                text += page_text + "\n"
+            text = page.extract_text()
+            if text:
+                documents.append(
+                    Document(
+                        page_content=text,
+                        metadata={"page": page_num}
+                    )
+                )
         except:
             continue
 
-    return text.strip()
+    return documents
 
 
 # =========================
 # TEXT CHUNKING
 # =========================
 
-def chunk_text(text: str) -> List[str]:
+def chunk_documents(documents):
     splitter = RecursiveCharacterTextSplitter(
-        chunk_size=700,
-        chunk_overlap=100
+        chunk_size=800,
+        chunk_overlap=150
     )
 
-    chunks = splitter.split_text(text)
+    chunks = []
 
-    clean_chunks = []
-    for chunk in chunks:
-        chunk = chunk.strip()
-        if not chunk:
-            continue
-        if len(chunk) < 40:
-            continue
-        clean_chunks.append(chunk)
+    for doc in documents:
+        split_texts = splitter.split_text(doc.page_content)
+        for text in split_texts:
+            chunks.append(
+                Document(
+                    page_content=text,
+                    metadata={"page": doc.metadata["page"]}
+                )
+            )
 
-    return clean_chunks
+    return chunks
 
 
 # =========================
-# EMBEDDINGS (LOCAL + FREE)
+# EMBEDDINGS (Local Sentence Transformer)
 # =========================
 
-class HFEmbeddings(Embeddings):
+from sentence_transformers import SentenceTransformer
+
+class LocalEmbeddings(Embeddings):
     def __init__(self):
         self.model = SentenceTransformer("all-MiniLM-L6-v2")
 
@@ -95,61 +100,79 @@ class HFEmbeddings(Embeddings):
 
 
 # =========================
-# FAISS INDEX
+# VECTOR STORE
 # =========================
 
 def create_faiss_index(chunks):
-    embeddings = HFEmbeddings()
-    return FAISS.from_texts(texts=chunks, embedding=embeddings)
+    texts = [c.page_content for c in chunks]
+    metadatas = [c.metadata for c in chunks]
+
+    embeddings = LocalEmbeddings()
+
+    return FAISS.from_texts(
+        texts=texts,
+        embedding=embeddings,
+        metadatas=metadatas
+    )
 
 
 # =========================
 # RETRIEVAL
 # =========================
 
-def retrieve_context(query: str, vectorstore, k: int = 4) -> str:
-    docs = vectorstore.similarity_search(query, k=k)
+def retrieve_docs(query, vectorstore, k=4):
+    return vectorstore.similarity_search(query, k=k)
 
+
+# =========================
+# ANSWER GENERATION WITH PAGE CITATION
+# =========================
+
+def generate_answer(query, docs):
     if not docs:
-        return ""
-
-    return "\n\n".join(d.page_content for d in docs)
-
-
-# =========================
-# ANSWER GENERATION (Groq)
-# =========================
-
-def generate_answer(query: str, context: str) -> str:
-    if not context.strip():
         return "Answer not found in the document."
 
+    context = ""
+    pages = set()
+
+    for doc in docs:
+        context += doc.page_content + "\n\n"
+        pages.add(str(doc.metadata["page"]))
+
+    pages_str = ", ".join(sorted(pages))
+
     prompt = f"""
-You are a document question answering system.
+You are a document-based AI assistant.
 
 Rules:
-- Use ONLY the provided context
-- Do NOT use prior knowledge
-- If the answer is not explicitly present, reply exactly:
-  "Answer not found in the document."
+- Use ONLY the provided document content.
+- Do NOT use external knowledge.
+- Write ONE descriptive paragraph.
+- Do NOT use bullet points or headings.
+- If answer is missing, say: Answer not found in the document.
 
-Context:
+Document Content:
 {context}
 
 Question:
 {query}
+
+Write a descriptive paragraph answer:
 """
 
     response = client.chat.completions.create(
-        model="llama-3.1-8b-instant",   # ✅ latest Groq model
+        model="llama-3.1-8b-instant",
         messages=[
-            {"role": "system", "content": "You are a helpful document assistant"},
+            {"role": "system", "content": "You are a helpful academic assistant."},
             {"role": "user", "content": prompt}
         ],
-        temperature=0.2
+        temperature=0.3,
+        max_tokens=400
     )
 
-    return response.choices[0].message.content
+    answer = response.choices[0].message.content.strip()
+
+    return f"{answer}\n\nSource: Pages {pages_str}"
 
 
 # =========================
@@ -158,13 +181,13 @@ Question:
 
 @st.cache_resource(show_spinner=False)
 def process_pdf(file):
-    text = load_pdf(file)
+    documents = load_pdf(file)
 
-    if not text.strip():
+    if not documents:
         st.error("This PDF appears to be scanned or empty.")
         st.stop()
 
-    chunks = chunk_text(text)
+    chunks = chunk_documents(documents)
 
     if not chunks:
         st.error("No text chunks could be created.")
@@ -189,8 +212,8 @@ if uploaded_file:
 
     if query:
         with st.spinner("Generating answer..."):
-            context = retrieve_context(query, vectorstore)
-            answer = generate_answer(query, context)
+            docs = retrieve_docs(query, vectorstore)
+            answer = generate_answer(query, docs)
 
         st.subheader("Answer")
         st.write(answer)

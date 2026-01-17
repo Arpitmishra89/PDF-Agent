@@ -1,10 +1,9 @@
 streamlit
+python-dotenv
 PyPDF2
 langchain
 langchain-community
-langchain-text-splitters
+langchain-core
+sentence-transformers
 faiss-cpu
 openai
-python-dotenv
-sentence-transformers
-
