@@ -1,51 +1,50 @@
-App Link: https://pdf-agent-x8rdrmuqixui52rmnwmpvi.streamlit.app/
- 
- # PDF Agent – Document Question Answering System
+**PDF Agent — Document Question Answering System**
 
-PDF Agent is an end-to-end document question answering web application that allows users to upload PDF files and ask natural language questions. The system retrieves relevant context using semantic search and generates precise, context-aware answers using Google Gemini models.
+**Live Application:**  
+https://pdf-agent-x8rdrmuqixui52rmnwmpvi.streamlit.app/
 
-This project demonstrates practical use of embeddings, vector databases, and LLMs in a real-world RAG (Retrieval-Augmented Generation) pipeline.
+**Overview**
 
----
+PDF Agent is an end-to-end document question answering web application that enables users to upload PDF documents and query them using natural language. The system retrieves the most relevant document segments through semantic search and generates precise, context-aware answers strictly grounded in the uploaded document.
 
-## Architecture Overview
+This project demonstrates a real-world implementation of a **Retrieval-Augmented Generation (RAG)** pipeline by integrating document parsing, vector embeddings, similarity search, and a Large Language Model (LLM) into a unified AI system.
 
-1. PDF upload via Streamlit UI  
-2. Text extraction from PDF using PyPDF2  
-3. Text chunking using RecursiveCharacterTextSplitter  
-4. Semantic embedding generation using Gemini text-embedding-004  
-5. Vector storage and similarity search using FAISS  
-6. Context-aware answer generation using Gemini Flash LLM  
+**Key Features**
 
----
-
-## Tech Stack
-
-- Python  
-- Streamlit  
-- Google Gemini API  
-- FAISS (Vector Database)  
-- LangChain (Text Splitters, Vector Store Interface)  
-- PyPDF2  
-- dotenv  
-
----
-
-## Features
-
-- Upload and process large PDF documents  
-- Semantic search over document content  
-- Accurate answers restricted strictly to document context  
+- Upload and process large PDF documents directly through a web interface  
+- Automatic text extraction from PDF files  
+- Intelligent document chunking for semantic understanding  
+- Semantic embedding generation for contextual search  
+- Vector-based similarity search using FAISS  
+- Context-aware answer generation using a Large Language Model  
+- Answers restricted strictly to the document content (no hallucination)  
 - Cached vector indexing for faster repeated queries  
-- Clean, minimal Streamlit UI  
+- Clean, responsive, and user-friendly Streamlit interface  
 
----
+## System Architecture (RAG Pipeline)
+PDF Upload
+↓
+Text Extraction (PyPDF2)
+↓
+Text Chunking (RecursiveCharacterTextSplitter)
+↓
+Embedding Generation
+↓
+FAISS Vector Database
+↓
+Similarity Search (Top-k Context Retrieval)
+↓
+LLM Answer Generation
 
-## Installation & Setup
+## Technology Stack
 
-### 1. Clone the repository
-```bash
-git clone https://github.com/ayushraviraj/pdf_agent.git
-cd pdf_agent
+- **Python** — Core programming language  
+- **Streamlit** — Web application framework  
+- **FAISS** — Vector database for similarity search  
+- **LangChain** — Text splitting and vector store interface  
+- **PyPDF2** — PDF text extraction  
+- **dotenv** — Environment variable management  
+- **Google Gemini API / Groq LLaMA-3.1** — Large Language Model backend  
+- **HuggingFace Sentence Transformers** — Local embedding generation  
 
 
