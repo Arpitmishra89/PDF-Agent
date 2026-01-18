@@ -44,7 +44,8 @@ LLM Answer Generation
 - **LangChain** — Text splitting and vector store interface  
 - **PyPDF2** — PDF text extraction  
 - **dotenv** — Environment variable management  
-- **Google Gemini API / Groq LLaMA-3.1** — Large Language Model backend  
+- **Groq LLaMA-3.1** — Large Language Model backend  
 - **HuggingFace Sentence Transformers** — Local embedding generation  
+
 
 
