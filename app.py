@@ -170,6 +170,9 @@ Write a descriptive paragraph answer:
         max_tokens=400
     )
 
+    if not response.choices or not response.choices[0].message.content:
+        return "Error: Failed to generate answer."
+
     answer = response.choices[0].message.content.strip()
 
     return f"{answer}\n\nSource: Pages {pages_str}"
