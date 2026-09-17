@@ -12,26 +12,29 @@ from langchain_core.embeddings import Embeddings
 from openai import OpenAI
 
 # =========================
-# ENV CONFIG
-# =========================
-
-load_dotenv()
-GROQ_API_KEY = os.getenv("GROQ_API_KEY")
-
-if not GROQ_API_KEY:
-    raise ValueError("GROQ_API_KEY not found in environment")
-
-client = OpenAI(
-    api_key=GROQ_API_KEY,
-    base_url="https://api.groq.com/openai/v1"
-)
-
-# =========================
 # STREAMLIT CONFIG
 # =========================
 
 st.set_page_config(page_title="PDF AI Agent", layout="wide")
 st.title("📄 PDF AI Agent")
+
+# =========================
+# ENV CONFIG
+# =========================
+
+load_dotenv()
+GROQ_API_KEY = os.getenv("GROQ_API_KEY")
+if not GROQ_API_KEY and hasattr(st, "secrets") and "GROQ_API_KEY" in st.secrets:
+    GROQ_API_KEY = st.secrets["GROQ_API_KEY"]
+
+if not GROQ_API_KEY:
+    st.error("⚠️ GROQ_API_KEY not found. Please add it to your .env file locally or to Streamlit Secrets.")
+    st.stop()
+
+client = OpenAI(
+    api_key=GROQ_API_KEY,
+    base_url="https://api.groq.com/openai/v1"
+)
 
 # =========================
 # PDF LOADING
@@ -128,7 +131,7 @@ def retrieve_docs(query, vectorstore, k=4):
 # ANSWER GENERATION WITH PAGE CITATION
 # =========================
 
-def generate_answer(query, docs):
+def generate_answer(query, docs, model="llama-3.3-70b-versatile"):
     if not docs:
         return "Answer not found in the document."
 
@@ -139,7 +142,7 @@ def generate_answer(query, docs):
         context += doc.page_content + "\n\n"
         pages.add(str(doc.metadata["page"]))
 
-    pages_str = ", ".join(sorted(pages))
+    pages_str = ", ".join(sorted(pages, key=lambda x: int(x) if x.isdigit() else x))
 
     prompt = f"""
 You are a document-based AI assistant.
@@ -160,15 +163,18 @@ Question:
 Write a descriptive paragraph answer:
 """
 
-    response = client.chat.completions.create(
-        model="llama-3.1-8b-instant",
-        messages=[
-            {"role": "system", "content": "You are a helpful academic assistant."},
-            {"role": "user", "content": prompt}
-        ],
-        temperature=0.3,
-        max_tokens=400
-    )
+    try:
+        response = client.chat.completions.create(
+            model=model,
+            messages=[
+                {"role": "system", "content": "You are a helpful academic assistant."},
+                {"role": "user", "content": prompt}
+            ],
+            temperature=0.3,
+            max_tokens=400
+        )
+    except Exception as e:
+        return f"⚠️ Error generating answer from LLM ({model}): {e}\n\nPlease check your Groq API key or try choosing another model from the sidebar."
 
     if not response.choices or not response.choices[0].message.content:
         return "Error: Failed to generate answer."
@@ -203,6 +209,20 @@ def process_pdf(file):
 # STREAMLIT UI
 # =========================
 
+with st.sidebar:
+    st.header("⚙️ Settings")
+    model_choice = st.selectbox(
+        "LLM Model (Groq)",
+        [
+            "llama-3.3-70b-versatile",
+            "llama-3.1-8b-instant",
+            "openai/gpt-oss-20b",
+            "openai/gpt-oss-120b"
+        ],
+        index=0,
+        help="Select the Groq model to use for generating answers."
+    )
+
 uploaded_file = st.file_uploader("Upload a PDF", type=["pdf"])
 
 if uploaded_file:
@@ -216,7 +236,7 @@ if uploaded_file:
     if query:
         with st.spinner("Generating answer..."):
             docs = retrieve_docs(query, vectorstore)
-            answer = generate_answer(query, docs)
+            answer = generate_answer(query, docs, model=model_choice)
 
         st.subheader("Answer")
         st.write(answer)
