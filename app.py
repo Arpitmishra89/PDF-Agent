@@ -1,4 +1,5 @@
 import os
+import re
 import time
 import streamlit as st
 from dotenv import load_dotenv
@@ -93,14 +94,18 @@ def chunk_documents(documents):
 
 
 # =========================
-# EMBEDDINGS (Local Sentence Transformer)
+# EMBEDDINGS (Cached Singleton)
 # =========================
 
 from sentence_transformers import SentenceTransformer
 
+@st.cache_resource(show_spinner=False)
+def get_embedding_model():
+    return SentenceTransformer("all-MiniLM-L6-v2")
+
 class LocalEmbeddings(Embeddings):
     def __init__(self):
-        self.model = SentenceTransformer("all-MiniLM-L6-v2")
+        self.model = get_embedding_model()
 
     def embed_documents(self, texts: List[str]) -> List[List[float]]:
         return self.model.encode(texts).tolist()
@@ -127,11 +132,36 @@ def create_faiss_index(chunks):
 
 
 # =========================
-# RETRIEVAL
+# RETRIEVAL (Multi-Query Aware)
 # =========================
 
-def retrieve_docs(query, vectorstore, k=4):
-    return vectorstore.similarity_search(query, k=k)
+def retrieve_docs(query, vectorstore, k=6):
+    # Primary search with the full question
+    all_docs = vectorstore.similarity_search(query, k=k)
+
+    # Sub-query decomposition for multi-part questions
+    sub_queries = [
+        q.strip()
+        for q in re.split(r"\?|\band\b|;|\balso\b|\bas well as\b", query, flags=re.IGNORECASE)
+        if len(q.strip()) > 8
+    ]
+
+    # Retrieve chunks for distinct sub-topics
+    if len(sub_queries) > 1:
+        for sub_q in sub_queries[:4]:
+            sub_docs = vectorstore.similarity_search(sub_q, k=3)
+            all_docs.extend(sub_docs)
+
+    # Deduplicate while preserving relevance order
+    seen = set()
+    unique_docs = []
+    for doc in all_docs:
+        sig = (doc.metadata.get("page", 0), doc.page_content[:80])
+        if sig not in seen:
+            seen.add(sig)
+            unique_docs.append(doc)
+
+    return unique_docs[:8]
 
 
 # =========================
@@ -154,12 +184,14 @@ def stream_answer(query, docs, model=DEFAULT_MODEL, chat_history=None):
         context += doc.page_content + "\n\n"
 
     system_instruction = (
-        "You are a document-based AI assistant.\n\n"
-        "Rules:\n"
-        "- Use ONLY the provided document content to answer the question.\n"
-        "- Do NOT use external knowledge.\n"
-        "- Be clear, factual, and concise.\n"
-        "- If the answer is not present in the document content, say: 'Answer not found in the document.'\n\n"
+        "You are an expert document-based AI assistant.\n\n"
+        "Instructions:\n"
+        "- Answer the user's question thoroughly and accurately using ONLY the provided Document Content.\n"
+        "- Do NOT use external knowledge or invent information.\n"
+        "- For multi-part questions, address each part that is supported by the document content.\n"
+        "- If certain specific parts are not covered in the document, answer the parts you can and briefly clarify which specific part could not be found.\n"
+        "- If none of the requested information exists in the document, say: 'Answer not found in the document.'\n"
+        "- Keep the answer clear, structured, and easy to read.\n\n"
         f"Document Content:\n{context}"
     )
 
@@ -177,7 +209,7 @@ def stream_answer(query, docs, model=DEFAULT_MODEL, chat_history=None):
             model=model,
             messages=messages,
             temperature=0.3,
-            max_tokens=500,
+            max_tokens=800,
             stream=True
         )
         for chunk in response_stream:
