@@ -1,4 +1,5 @@
 import os
+import time
 import streamlit as st
 from dotenv import load_dotenv
 from PyPDF2 import PdfReader
@@ -17,6 +18,18 @@ from openai import OpenAI
 
 st.set_page_config(page_title="PDF AI Agent", layout="wide")
 st.title("📄 PDF AI Agent")
+
+# Custom styling to replace red focus ring with modern blue
+st.markdown("""
+<style>
+    /* Chat input container & textarea focus border */
+    [data-testid="stChatInput"] textarea:focus,
+    [data-testid="stChatInput"] > div:focus-within {
+        border-color: #3B82F6 !important;
+        box-shadow: 0 0 0 1px #3B82F6 !important;
+    }
+</style>
+""", unsafe_allow_html=True)
 
 # =========================
 # ENV CONFIG
@@ -137,7 +150,7 @@ def format_sources(docs):
     return f"**Source:** Pages {pages_str}"
 
 
-def stream_answer(query, docs, model="llama-3.3-70b-versatile", chat_history=None):
+def stream_answer(query, docs, model="llama-3.1-8b-instant", chat_history=None):
     if not docs:
         yield "Answer not found in the document."
         return
@@ -175,12 +188,14 @@ def stream_answer(query, docs, model="llama-3.3-70b-versatile", chat_history=Non
         )
         for chunk in response_stream:
             if chunk.choices and chunk.choices[0].delta.content:
-                yield chunk.choices[0].delta.content
+                content = chunk.choices[0].delta.content
+                yield content
+                time.sleep(0.015)  # ChatGPT-style smooth typewriter pacing
     except Exception as e:
         yield f"\n\n⚠️ Error generating answer from LLM ({model}): {e}\n\nPlease check your Groq API key or try choosing another model from the sidebar."
 
 
-def generate_answer(query, docs, model="llama-3.3-70b-versatile"):
+def generate_answer(query, docs, model="llama-3.1-8b-instant"):
     """Non-streaming fallback helper."""
     chunks = list(stream_answer(query, docs, model=model))
     answer = "".join(chunks)
@@ -225,8 +240,8 @@ with st.sidebar:
     model_choice = st.selectbox(
         "LLM Model (Groq)",
         [
-            "llama-3.3-70b-versatile",
             "llama-3.1-8b-instant",
+            "llama-3.3-70b-versatile",
             "openai/gpt-oss-20b",
             "openai/gpt-oss-120b"
         ],
