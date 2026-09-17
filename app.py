@@ -131,57 +131,61 @@ def retrieve_docs(query, vectorstore, k=4):
 # ANSWER GENERATION WITH PAGE CITATION
 # =========================
 
-def generate_answer(query, docs, model="llama-3.3-70b-versatile"):
+def format_sources(docs):
+    pages = sorted(set(str(d.metadata.get("page", "?")) for d in docs), key=lambda x: int(x) if x.isdigit() else x)
+    pages_str = ", ".join(pages) if pages else "N/A"
+    return f"**Source:** Pages {pages_str}"
+
+
+def stream_answer(query, docs, model="llama-3.3-70b-versatile", chat_history=None):
     if not docs:
-        return "Answer not found in the document."
+        yield "Answer not found in the document."
+        return
 
     context = ""
-    pages = set()
-
     for doc in docs:
         context += doc.page_content + "\n\n"
-        pages.add(str(doc.metadata["page"]))
 
-    pages_str = ", ".join(sorted(pages, key=lambda x: int(x) if x.isdigit() else x))
+    system_instruction = (
+        "You are a document-based AI assistant.\n\n"
+        "Rules:\n"
+        "- Use ONLY the provided document content to answer the question.\n"
+        "- Do NOT use external knowledge.\n"
+        "- Be clear, factual, and concise.\n"
+        "- If the answer is not present in the document content, say: 'Answer not found in the document.'\n\n"
+        f"Document Content:\n{context}"
+    )
 
-    prompt = f"""
-You are a document-based AI assistant.
+    messages = [{"role": "system", "content": system_instruction}]
 
-Rules:
-- Use ONLY the provided document content.
-- Do NOT use external knowledge.
-- Write ONE descriptive paragraph.
-- Do NOT use bullet points or headings.
-- If answer is missing, say: Answer not found in the document.
+    # Include recent conversation turns for multi-turn context
+    if chat_history:
+        for msg in chat_history[-4:]:
+            messages.append({"role": msg["role"], "content": msg["content"]})
 
-Document Content:
-{context}
-
-Question:
-{query}
-
-Write a descriptive paragraph answer:
-"""
+    messages.append({"role": "user", "content": query})
 
     try:
-        response = client.chat.completions.create(
+        response_stream = client.chat.completions.create(
             model=model,
-            messages=[
-                {"role": "system", "content": "You are a helpful academic assistant."},
-                {"role": "user", "content": prompt}
-            ],
+            messages=messages,
             temperature=0.3,
-            max_tokens=400
+            max_tokens=500,
+            stream=True
         )
+        for chunk in response_stream:
+            if chunk.choices and chunk.choices[0].delta.content:
+                yield chunk.choices[0].delta.content
     except Exception as e:
-        return f"⚠️ Error generating answer from LLM ({model}): {e}\n\nPlease check your Groq API key or try choosing another model from the sidebar."
+        yield f"\n\n⚠️ Error generating answer from LLM ({model}): {e}\n\nPlease check your Groq API key or try choosing another model from the sidebar."
 
-    if not response.choices or not response.choices[0].message.content:
-        return "Error: Failed to generate answer."
 
-    answer = response.choices[0].message.content.strip()
-
-    return f"{answer}\n\nSource: Pages {pages_str}"
+def generate_answer(query, docs, model="llama-3.3-70b-versatile"):
+    """Non-streaming fallback helper."""
+    chunks = list(stream_answer(query, docs, model=model))
+    answer = "".join(chunks)
+    citation = format_sources(docs)
+    return f"{answer}\n\n{citation}"
 
 
 # =========================
@@ -206,8 +210,15 @@ def process_pdf(file):
 
 
 # =========================
-# STREAMLIT UI
+# STREAMLIT UI & CHAT INTERFACE
 # =========================
+
+# Initialize chat session states
+if "messages" not in st.session_state:
+    st.session_state.messages = []
+
+if "current_file" not in st.session_state:
+    st.session_state.current_file = None
 
 with st.sidebar:
     st.header("⚙️ Settings")
@@ -223,20 +234,65 @@ with st.sidebar:
         help="Select the Groq model to use for generating answers."
     )
 
+    st.markdown("---")
+    if st.button("🗑️ Clear Chat History", use_container_width=True):
+        st.session_state.messages = []
+        st.rerun()
+
 uploaded_file = st.file_uploader("Upload a PDF", type=["pdf"])
 
 if uploaded_file:
+    # Reset conversation when a new file is uploaded
+    if st.session_state.current_file != uploaded_file.name:
+        st.session_state.current_file = uploaded_file.name
+        st.session_state.messages = []
+
     with st.spinner("Processing PDF..."):
         vectorstore = process_pdf(uploaded_file)
 
-    st.success("PDF processed successfully")
+    st.success(f"✅ PDF '{uploaded_file.name}' processed successfully!")
 
-    query = st.text_input("Ask a question from the document")
+    # Display existing chat history
+    for msg in st.session_state.messages:
+        with st.chat_message(msg["role"]):
+            st.markdown(msg["content"])
+            if msg.get("sources"):
+                with st.expander("🔍 View Retrieved Document Chunks"):
+                    for i, src in enumerate(msg["sources"], start=1):
+                        st.markdown(f"**Chunk {i} (Page {src['page']}):**\n\n{src['content']}")
 
-    if query:
-        with st.spinner("Generating answer..."):
-            docs = retrieve_docs(query, vectorstore)
-            answer = generate_answer(query, docs, model=model_choice)
+    # User chat input
+    if prompt := st.chat_input("Ask a question about the document..."):
+        # Display user message in chat
+        with st.chat_message("user"):
+            st.markdown(prompt)
 
-        st.subheader("Answer")
-        st.write(answer)
+        # Retrieve relevant chunks
+        docs = retrieve_docs(prompt, vectorstore)
+
+        sources_info = [
+            {"page": d.metadata.get("page", "?"), "content": d.page_content}
+            for d in docs
+        ]
+        citation = format_sources(docs)
+
+        # Stream assistant response
+        with st.chat_message("assistant"):
+            full_response = st.write_stream(
+                stream_answer(prompt, docs, model=model_choice, chat_history=st.session_state.messages)
+            )
+            st.markdown(f"\n\n{citation}")
+
+            with st.expander("🔍 View Retrieved Document Chunks"):
+                for i, src in enumerate(sources_info, start=1):
+                    st.markdown(f"**Chunk {i} (Page {src['page']}):**\n\n{src['content']}")
+
+        # Save to chat history
+        st.session_state.messages.append({"role": "user", "content": prompt})
+        st.session_state.messages.append({
+            "role": "assistant",
+            "content": f"{full_response}\n\n{citation}",
+            "sources": sources_info
+        })
+else:
+    st.info("👆 Please upload a PDF document above to start chatting.")
