@@ -19,17 +19,11 @@ from openai import OpenAI
 st.set_page_config(page_title="PDF AI Agent", layout="wide")
 st.title("📄 PDF AI Agent")
 
-# Custom styling to replace red focus ring with modern blue
-st.markdown("""
-<style>
-    /* Chat input container & textarea focus border */
-    [data-testid="stChatInput"] textarea:focus,
-    [data-testid="stChatInput"] > div:focus-within {
-        border-color: #3B82F6 !important;
-        box-shadow: 0 0 0 1px #3B82F6 !important;
-    }
-</style>
-""", unsafe_allow_html=True)
+# =========================
+# MODEL CONFIG
+# =========================
+
+DEFAULT_MODEL = "openai/gpt-oss-20b"
 
 # =========================
 # ENV CONFIG
@@ -150,7 +144,7 @@ def format_sources(docs):
     return f"**Source:** Pages {pages_str}"
 
 
-def stream_answer(query, docs, model="llama-3.1-8b-instant", chat_history=None):
+def stream_answer(query, docs, model=DEFAULT_MODEL, chat_history=None):
     if not docs:
         yield "Answer not found in the document."
         return
@@ -192,10 +186,10 @@ def stream_answer(query, docs, model="llama-3.1-8b-instant", chat_history=None):
                 yield content
                 time.sleep(0.015)  # ChatGPT-style smooth typewriter pacing
     except Exception as e:
-        yield f"\n\n⚠️ Error generating answer from LLM ({model}): {e}\n\nPlease check your Groq API key or try choosing another model from the sidebar."
+        yield f"\n\n⚠️ Error generating answer from LLM: {e}"
 
 
-def generate_answer(query, docs, model="llama-3.1-8b-instant"):
+def generate_answer(query, docs, model=DEFAULT_MODEL):
     """Non-streaming fallback helper."""
     chunks = list(stream_answer(query, docs, model=model))
     answer = "".join(chunks)
@@ -236,20 +230,7 @@ if "current_file" not in st.session_state:
     st.session_state.current_file = None
 
 with st.sidebar:
-    st.header("⚙️ Settings")
-    model_choice = st.selectbox(
-        "LLM Model (Groq)",
-        [
-            "llama-3.1-8b-instant",
-            "llama-3.3-70b-versatile",
-            "openai/gpt-oss-20b",
-            "openai/gpt-oss-120b"
-        ],
-        index=0,
-        help="Select the Groq model to use for generating answers."
-    )
-
-    st.markdown("---")
+    st.header("⚙️ Options")
     if st.button("🗑️ Clear Chat History", use_container_width=True):
         st.session_state.messages = []
         st.rerun()
@@ -265,16 +246,15 @@ if uploaded_file:
     with st.spinner("Processing PDF..."):
         vectorstore = process_pdf(uploaded_file)
 
-    st.success(f"✅ PDF '{uploaded_file.name}' processed successfully!")
+    # Temporary toast notification that automatically disappears after a few seconds
+    if st.session_state.get("toast_shown_for") != uploaded_file.name:
+        st.toast(f"PDF '{uploaded_file.name}' processed successfully!", icon="✅")
+        st.session_state.toast_shown_for = uploaded_file.name
 
     # Display existing chat history
     for msg in st.session_state.messages:
         with st.chat_message(msg["role"]):
             st.markdown(msg["content"])
-            if msg.get("sources"):
-                with st.expander("🔍 View Retrieved Document Chunks"):
-                    for i, src in enumerate(msg["sources"], start=1):
-                        st.markdown(f"**Chunk {i} (Page {src['page']}):**\n\n{src['content']}")
 
     # User chat input
     if prompt := st.chat_input("Ask a question about the document..."):
@@ -284,30 +264,20 @@ if uploaded_file:
 
         # Retrieve relevant chunks
         docs = retrieve_docs(prompt, vectorstore)
-
-        sources_info = [
-            {"page": d.metadata.get("page", "?"), "content": d.page_content}
-            for d in docs
-        ]
         citation = format_sources(docs)
 
         # Stream assistant response
         with st.chat_message("assistant"):
             full_response = st.write_stream(
-                stream_answer(prompt, docs, model=model_choice, chat_history=st.session_state.messages)
+                stream_answer(prompt, docs, model=DEFAULT_MODEL, chat_history=st.session_state.messages)
             )
             st.markdown(f"\n\n{citation}")
-
-            with st.expander("🔍 View Retrieved Document Chunks"):
-                for i, src in enumerate(sources_info, start=1):
-                    st.markdown(f"**Chunk {i} (Page {src['page']}):**\n\n{src['content']}")
 
         # Save to chat history
         st.session_state.messages.append({"role": "user", "content": prompt})
         st.session_state.messages.append({
             "role": "assistant",
-            "content": f"{full_response}\n\n{citation}",
-            "sources": sources_info
+            "content": f"{full_response}\n\n{citation}"
         })
 else:
     st.info("👆 Please upload a PDF document above to start chatting.")
